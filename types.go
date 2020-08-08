@@ -360,19 +360,31 @@ type Tokens struct {
 }
 
 type VoteSummary struct {
-	Status             int                `json:"status"`
-	Approved           bool               `json:"approved,omitempty"`
-	Type           	   VoteT              `json:"type,omitempty"`
-	EligibleTickets    int                `json:"eligibletickets"`
-	Duration    	   int64              `json:"duration,omitempty"`
-	EndHeight          int64              `json:"endheight,omitempty"`
-	QuorumPercentage   int                `json:"quorumpercentage,omitempty"`
-	PassPercentage     int                `json:"passpercentage,omitempty"`
-	OptionsResult      []VoteOptionResult `json:"optionsresult,omitempty"`
+	Status           int                `json:"status"`
+	Approved         bool               `json:"approved,omitempty"`
+	Type             VoteT              `json:"type,omitempty"`
+	EligibleTickets  int                `json:"eligibletickets"`
+	Duration         int64              `json:"duration,omitempty"`
+	EndHeight        int64              `json:"endheight,omitempty"`
+	QuorumPercentage int                `json:"quorumpercentage,omitempty"`
+	PassPercentage   int                `json:"passpercentage,omitempty"`
+	OptionsResult    []VoteOptionResult `json:"optionsresult,omitempty"`
 }
 
 type VoteT struct {
-	VoteTypeInvalid     int                
-	VoteTypeStandard    int                
-	VoteType 			int               
+	VoteTypeInvalid  int
+	VoteTypeStandard int
+	VoteType         int
+}
+
+type User struct {
+	Email         string `json:"email"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	SessionMaxAge int64  `json:"sessionmaxage"`
+}
+
+type Login struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }

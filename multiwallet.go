@@ -38,7 +38,7 @@ type MultiWallet struct {
 	shuttingDown chan bool
 	cancelFuncs  []context.CancelFunc
 
-	Politeia Politeia
+	Politeia *Politeia
 }
 
 func NewMultiWallet(rootDir, dbDriver, netType string) (*MultiWallet, error) {
@@ -87,7 +87,11 @@ func NewMultiWallet(rootDir, dbDriver, netType string) (*MultiWallet, error) {
 			syncProgressListeners: make(map[string]SyncProgressListener),
 		},
 		txAndBlockNotificationListeners: make(map[string]TxAndBlockNotificationListener),
-		Politeia:                        NewPoliteia(),
+	}
+
+	mw.Politeia, err = NewPoliteia(rootDir)
+	if err != nil {
+		return nil, err
 	}
 
 	// read saved wallets info from db and initialize wallets

@@ -1,196 +1,88 @@
 package dcrlibwallet
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-)
+	"path/filepath"
 
-const (
-	endpoint            	= "proposals.decred.org"
-	endpointPath        	= "/api/v1"
-	versionPath         	= "/version"
-	policyPath          	= "/policy"
-	vettedProposalsPath 	= "/proposals/vetted"
-	proposalDetailsPath 	= "/proposals/%s"
-	voteStatusPath      	= "/proposals/%s/votestatus"
-	votesStatusPath     	= "/proposals/votestatus"
-	tokenInventoryPath 		= "/proposals/tokeninventory"
-	batchProposalsPath  	= "/proposals/batch"
-	batchVoteSummaryPath  	= "/proposals/batchvotesummary"
+	"github.com/asdine/storm"
+	"github.com/asdine/storm/q"
 )
 
 type Politeia struct {
-	csrfToken    string
-	cookie       *http.Cookie
-	serverPolicy *ServerPolicy
+	client *client
 }
 
-func NewPoliteia() Politeia {
-	return Politeia{}
-}
-
-func (p *Politeia) prepareRequest(path, method string, queryStrings map[string]string, body []byte) (*http.Request, error) {
-	req := &http.Request{
-		Method: method,
-		URL:    &url.URL{Scheme: "https", Host: endpoint, Path: endpointPath + path},
-	}
-
-	if body != nil {
-		req.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-	}
-
-	if queryStrings != nil {
-		queryString := req.URL.Query()
-		for i, v := range queryStrings {
-			queryString.Set(i, v)
-		}
-		req.URL.RawQuery = queryString.Encode()
-	}
-
-	if method == "POST" {
-		if p.csrfToken == "" {
-			if err := p.getCSRFToken(); err != nil {
-				return nil, err
-			}
-		}
-		req.Header = make(http.Header)
-		req.Header.Set("X-CSRF-TOKEN", p.csrfToken)
-		req.AddCookie(p.cookie)
-	}
-
-	return req, nil
-}
-
-func (p *Politeia) getCSRFToken() error {
-	req := &http.Request{
-		Method: "GET",
-		URL:    &url.URL{Scheme: "https", Host: endpoint, Path: endpointPath + versionPath},
-	}
-
-	res, err := http.DefaultClient.Do(req)
+func NewPoliteia(rootDir string) (*Politeia, error) {
+	var err error
+	configDB, err = storm.Open(filepath.Join(rootDir, politeiaConfigDbName))
 	if err != nil {
-		return fmt.Errorf("error fetching csrf token")
+		return nil, fmt.Errorf("error opening politeia database: %s", err.Error())
 	}
 
-	p.csrfToken = res.Header.Get("X-CSRF-TOKEN")
+	err = configDB.Init(&PoliteiaConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("error initializing politeia config database: %s", err.Error())
+	}
 
-	for _, v := range res.Cookies() {
-		if v.Name == "_gorilla_csrf" {
-			p.cookie = v
-			break
+	config := &PoliteiaConfig{}
+
+	var shouldFetchVersion bool
+	err = configDB.Select(q.Eq("ID", 1)).First(config)
+	if err != nil {
+		if err == storm.ErrNotFound {
+			shouldFetchVersion = true
+		} else {
+			return nil, fmt.Errorf("error loading politeia config: %s", err.Error())
 		}
 	}
 
-	return nil
-}
-
-func (p *Politeia) makeRequest(path, method string, queryStrings map[string]string, body []byte, dest interface{}) error {
-	req, err := p.prepareRequest(path, method, queryStrings, body)
-	if err != nil {
-		return err
-	}
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-
-	return p.handleResponse(res, dest)
-}
-
-func (p *Politeia) handleResponse(res *http.Response, dest interface{}) error {
-	switch res.StatusCode {
-	case http.StatusOK:
-		return json.NewDecoder(res.Body).Decode(dest)
-	case http.StatusNotFound:
-		return errors.New("resource not found")
-	case http.StatusInternalServerError:
-		return errors.New("internal server error")
-	case http.StatusBadRequest:
-		var errResp Err
-		if err := p.marshalResponse(res, &errResp); err != nil {
-			return err
-		}
-		return fmt.Errorf("bad request: %s", ErrorStatus[errResp.Code])
-	}
-
-	return errors.New("an unknown error occurred")
-}
-
-func (p *Politeia) marshalResponse(res *http.Response, dest interface{}) error {
-	defer res.Body.Close()
-
-	err := json.NewDecoder(res.Body).Decode(dest)
-	if err != nil {
-		return fmt.Errorf("error decoding response body: %s", err.Error())
-	}
-
-	return nil
-}
-
-func (p *Politeia) getServerPolicy() (*ServerPolicy, error) {
-	var serverPolicy ServerPolicy
-
-	err := p.makeRequest(policyPath, "GET", nil, nil, &serverPolicy)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching politeia policy: %v", err)
-	}
-	return &serverPolicy, nil
-}
-
-func (p *Politeia) getTokenInventory() (*TokenInventory, error) {
-	var tokenInventory TokenInventory
-	err := p.makeRequest(tokenInventoryPath, "GET", nil, nil, &tokenInventory)
+	client, err := newPoliteiaClient(config)
 	if err != nil {
 		return nil, err
 	}
 
-	return &tokenInventory, nil
+	if shouldFetchVersion {
+		config.ID = 1
+		configDB.Save(config)
+
+		_, err = client.version()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &Politeia{
+		client: client,
+	}, nil
+}
+
+func (p *Politeia) Shutdown() {
+	configDB.Close()
+}
+
+func (p *Politeia) result(id string, res interface{}) (string, error) {
+	resByte, err := json.Marshal(res)
+	if err != nil {
+		return "", fmt.Errorf("error marshalling %s result: %s", id, err.Error())
+	}
+
+	return string(resByte), nil
 }
 
 // GetTokenInventory fetches the censorship record tokens of all proposals in the inventory
 func (p *Politeia) GetTokenInventory() (string, error) {
-	tokenInventory, err := p.getTokenInventory()
+	tokenInventory, err := p.client.tokenInventory()
 	if err != nil {
 		return "", err
 	}
 
-	jsonBytes, err := json.Marshal(tokenInventory)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling token inventory result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-}
-
-func (p *Politeia) getBatchProposals(censorshipTokens *Tokens) ([]Proposal, error) {
-	if censorshipTokens == nil {
-		return nil, errors.New("censorship token cannot be empty")
-	}
-
-	b, err := json.Marshal(censorshipTokens)
-	if err != nil {
-		return nil, err
-	}
-	 
-	var result Proposals
-	err = p.makeRequest(batchProposalsPath, "POST", nil, b, &result)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.Proposals, err
+	return p.result("GetTokenInventory", tokenInventory)
 }
 
 //GetBatchPreProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
 func (p *Politeia) GetBatchPreProposals() (string, error) {
-
-	tokenInventory, err := p.getTokenInventory()
+	tokenInventory, err := p.client.tokenInventory()
 	if err != nil {
 		return "", err
 	}
@@ -201,13 +93,13 @@ func (p *Politeia) GetBatchPreProposals() (string, error) {
 	} else {
 		prevotesproposals = &Tokens{tokenInventory.Pre}
 	}
-	
-	proposals, err := p.getBatchProposals(prevotesproposals)
+
+	proposals, err := p.client.batchProposals(prevotesproposals)
 	if err != nil {
 		return "", err
 	}
 
-	votesStatus, err := p.getBatchVoteSummary(prevotesproposals)
+	votesStatus, err := p.client.batchVoteSummary(prevotesproposals)
 	if err != nil {
 		return "", err
 	}
@@ -219,19 +111,12 @@ func (p *Politeia) GetBatchPreProposals() (string, error) {
 		}
 	}
 
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling batch proposals result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-
+	return p.result("GetBatchPreProposals", proposals)
 }
 
 //GetBatchActiveProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
 func (p *Politeia) GetBatchActiveProposals() (string, error) {
-
-	tokenInventory, err := p.getTokenInventory()
+	tokenInventory, err := p.client.tokenInventory()
 	if err != nil {
 		return "", err
 	}
@@ -243,12 +128,12 @@ func (p *Politeia) GetBatchActiveProposals() (string, error) {
 		activeproposals = &Tokens{tokenInventory.Active}
 	}
 
-	proposals, err := p.getBatchProposals(activeproposals)
+	proposals, err := p.client.batchProposals(activeproposals)
 	if err != nil {
 		return "", err
 	}
 
-	votesStatus, err := p.getBatchVoteSummary(activeproposals)
+	votesStatus, err := p.client.batchVoteSummary(activeproposals)
 	if err != nil {
 		return "", err
 	}
@@ -260,19 +145,12 @@ func (p *Politeia) GetBatchActiveProposals() (string, error) {
 		}
 	}
 
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling batch proposals result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-
+	return p.result("GetBatchActiveProposals", proposals)
 }
 
 //GetBatchApprovedProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
 func (p *Politeia) GetBatchApprovedProposals() (string, error) {
-
-	tokenInventory, err := p.getTokenInventory()
+	tokenInventory, err := p.client.tokenInventory()
 	if err != nil {
 		return "", err
 	}
@@ -284,12 +162,12 @@ func (p *Politeia) GetBatchApprovedProposals() (string, error) {
 		approvedproposals = &Tokens{tokenInventory.Approved}
 	}
 
-	proposals, err := p.getBatchProposals(approvedproposals)
+	proposals, err := p.client.batchProposals(approvedproposals)
 	if err != nil {
 		return "", err
 	}
 
-	votesStatus, err := p.getBatchVoteSummary(approvedproposals)
+	votesStatus, err := p.client.batchVoteSummary(approvedproposals)
 	if err != nil {
 		return "", err
 	}
@@ -301,19 +179,12 @@ func (p *Politeia) GetBatchApprovedProposals() (string, error) {
 		}
 	}
 
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling batch proposals result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-
+	return p.result("GetBatchApprovedProposals", proposals)
 }
 
 //GetBatchRejectedProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
 func (p *Politeia) GetBatchRejectedProposals() (string, error) {
-
-	tokenInventory, err := p.getTokenInventory()
+	tokenInventory, err := p.client.tokenInventory()
 	if err != nil {
 		return "", err
 	}
@@ -325,12 +196,12 @@ func (p *Politeia) GetBatchRejectedProposals() (string, error) {
 		rejectedproposals = &Tokens{tokenInventory.Rejected}
 	}
 
-	proposals, err := p.getBatchProposals(rejectedproposals)
+	proposals, err := p.client.batchProposals(rejectedproposals)
 	if err != nil {
 		return "", err
 	}
 
-	votesStatus, err := p.getBatchVoteSummary(rejectedproposals)
+	votesStatus, err := p.client.batchVoteSummary(rejectedproposals)
 	if err != nil {
 		return "", err
 	}
@@ -342,19 +213,12 @@ func (p *Politeia) GetBatchRejectedProposals() (string, error) {
 		}
 	}
 
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling batch proposals result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-
+	return p.result("GetBatchRejectedProposals", proposals)
 }
 
 //GetBatchAbandonedProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
 func (p *Politeia) GetBatchAbandonedProposals() (string, error) {
-
-	tokenInventory, err := p.getTokenInventory()
+	tokenInventory, err := p.client.tokenInventory()
 	if err != nil {
 		return "", err
 	}
@@ -366,12 +230,12 @@ func (p *Politeia) GetBatchAbandonedProposals() (string, error) {
 		abandonedproposals = &Tokens{tokenInventory.Abandoned}
 	}
 
-	proposals, err := p.getBatchProposals(abandonedproposals)
+	proposals, err := p.client.batchProposals(abandonedproposals)
 	if err != nil {
 		return "", err
 	}
 
-	votesStatus, err := p.getBatchVoteSummary(abandonedproposals)
+	votesStatus, err := p.client.batchVoteSummary(abandonedproposals)
 	if err != nil {
 		return "", err
 	}
@@ -383,184 +247,26 @@ func (p *Politeia) GetBatchAbandonedProposals() (string, error) {
 		}
 	}
 
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling batch proposals result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-
-}
-
-func (p *Politeia) getBatchVoteSummary(censorshipTokens *Tokens) ([]VoteStatus, error) {
-	if censorshipTokens == nil {
-		return nil, errors.New("censorship token cannot be empty")
-	}
-
-	b, err := json.Marshal(censorshipTokens)
-	if err != nil {
-		return nil, err
-	}
-	 
-	var result VotesStatus
-	err = p.makeRequest(batchVoteSummaryPath, "POST", nil, b, &result)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.VotesStatus, err
-}
-
-func (p *Politeia) getProposalsChunk(startHash string) ([]Proposal, error) {
-	var queryStrings map[string]string
-	if startHash != "" {
-		queryStrings = map[string]string{
-			"after": startHash,
-		}
-	}
-
-	var result Proposals
-	err := p.makeRequest(vettedProposalsPath, "GET", queryStrings, nil, &result)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching proposals from %s: %v", startHash, err)
-	}
-
-	return result.Proposals, err
-}
-
-// GetProposalsChunk gets proposals starting after the proposal with the specified
-// censorship hash. The number of proposals returned is specified in the poltieia
-// policy API endpoint
-func (p *Politeia) GetProposalsChunk(startHash string) (string, error) {
-	proposals, err := p.getProposalsChunk(startHash)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range proposals {
-		voteStatus, err := p.getVoteStatus(proposals[i].CensorshipRecord.Token)
-		if err != nil {
-			return "", err
-		}
-		proposals[i].VoteStatus = *voteStatus
-	}
-
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling proposal result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-}
-
-// GetAllProposal fetches all vetted proposals
-func (p *Politeia) GetAllProposals() (string, error) {
-	var proposalChunkResult, proposals []Proposal
-	var err error
-
-	if p.serverPolicy == nil {
-		policy, err := p.getServerPolicy()
-		if err != nil {
-			return "", err
-		}
-		p.serverPolicy = policy
-	}
-
-	proposalChunkResult, err = p.getProposalsChunk("")
-	if err != nil {
-		return "", fmt.Errorf("error fetching all proposals: %s", err.Error())
-	}
-	proposals = append(proposals, proposalChunkResult...)
-
-	for {
-		if proposalChunkResult == nil || len(proposalChunkResult) < p.serverPolicy.ProposalListPageSize {
-			break
-		}
-
-		proposalChunkResult, err = p.getProposalsChunk(proposalChunkResult[p.serverPolicy.ProposalListPageSize-1].CensorshipRecord.Token)
-		if err != nil {
-			return "", err
-		}
-		proposals = append(proposals, proposalChunkResult...)
-	}
-
-	jsonBytes, err := json.Marshal(proposals)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling proposal result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), err
+	return p.result("GetBatchAbandonedProposals", proposals)
 }
 
 // GetProposalDetails fetches the details of a single proposal
 // if the version argument is an empty string, the latest version is used
 func (p *Politeia) GetProposalDetails(censorshipToken, version string) (string, error) {
-	if censorshipToken == "" {
-		return "", errors.New("censorship token cannot be empty")
-	}
-
-	var queryStrings map[string]string
-	if version != "" {
-		queryStrings = map[string]string{
-			"version": version,
-		}
-	}
-
-	var result ProposalResult
-	err := p.makeRequest(fmt.Sprintf(proposalDetailsPath, censorshipToken), "GET", queryStrings, nil, &result)
+	res, err := p.client.proposalDetails(censorshipToken, version)
 	if err != nil {
 		return "", err
 	}
 
-	jsonBytes, err := json.Marshal(result.Proposal)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling proposal result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), err
-}
-
-func (p *Politeia) getVoteStatus(censorshipToken string) (*VoteStatus, error) {
-	if censorshipToken == "" {
-		return nil, errors.New("censorship token cannot be empty")
-	}
-
-	var voteStatus VoteStatus
-	err := p.makeRequest(fmt.Sprintf(voteStatusPath, censorshipToken), "GET", nil, nil, &voteStatus)
-	if err != nil {
-		return nil, err
-	}
-
-	return &voteStatus, nil
+	return p.result("GetProposalDetails", res)
 }
 
 // GetVoteStatus fetches the vote status of a single public proposal
 func (p *Politeia) GetVoteStatus(censorshipToken string) (string, error) {
-	voteStatus, err := p.getVoteStatus(censorshipToken)
+	res, err := p.client.voteStatus(censorshipToken)
 	if err != nil {
 		return "", err
 	}
 
-	jsonBytes, err := json.Marshal(voteStatus)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling proposal result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
-}
-
-// GetAllVotesStatus fetches the vote status of all public proposals
-func (p *Politeia) GetAllVotesStatus() (string, error) {
-	var votesStatus VotesStatus
-	err := p.makeRequest(votesStatusPath, "GET", nil, nil, &votesStatus)
-	if err != nil {
-		return "", err
-	}
-
-	jsonBytes, err := json.Marshal(votesStatus)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling proposal result to json: %s", err.Error())
-	}
-
-	return string(jsonBytes), nil
+	return p.result("GetVoteStatus", res)
 }
