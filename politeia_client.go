@@ -3,19 +3,17 @@ package dcrlibwallet
 import (
 	"bytes"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"time"
 
-	cms "github.com/decred/politeia/politeiawww/api/cms/v1"
 	www "github.com/decred/politeia/politeiawww/api/www/v1"
 	"github.com/decred/politeia/util"
-	"golang.org/x/crypto/sha3"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -37,7 +35,6 @@ const (
 	tokenInventoryPath   = "/proposals/tokeninventory"
 	batchProposalsPath   = "/proposals/batch"
 	batchVoteSummaryPath = "/proposals/batchvotesummary"
-	loginPath            = "/login"
 )
 
 func newPoliteiaClient(cfg *PoliteiaConfig) (*client, error) {
@@ -77,46 +74,51 @@ func newPoliteiaClient(cfg *PoliteiaConfig) (*client, error) {
 	return c, nil
 }
 
-func userErrorStatus(e www.ErrorStatusT) string {
-	s, ok := www.ErrorStatus[e]
-	if ok {
-		return s
+func (c *client) getRequestBody(method string, body interface{}) ([]byte, error) {
+	if body == nil {
+		return nil, nil
 	}
-	s, ok = cms.ErrorStatus[e]
-	if ok {
-		return s
-	}
-	return ""
-}
 
-func (c *client) makeRequest(method, path string, body interface{}, dest interface{}) error {
-	// Setup request
-	var requestBody []byte
-	var queryParams string
-	var err error
-
-	if body != nil {
-		switch method {
-		case http.MethodGet:
-			if body == nil {
-				break
+	if method == http.MethodPost {
+		if requestBody, ok := body.([]byte); ok {
+			return requestBody, nil
+		}
+	} else if method == http.MethodGet {
+		if requestBody, ok := body.(map[string]string); ok {
+			params := url.Values{}
+			for key, val := range requestBody {
+				params.Add(key, val)
 			}
-			queryParams = "?" + body.(string)
-		case http.MethodPost:
-			requestBody, err = json.Marshal(body)
-			if err != nil {
-				return fmt.Errorf("error marshaling request body: %s", err.Error())
-			}
-		default:
-			return fmt.Errorf("unsupported HTTP method: %s", method)
+			return []byte(params.Encode()), nil
 		}
 	}
 
-	route := host + apiPath + path + queryParams
+	return nil, errors.New("invalid request body")
+}
+
+func (c *client) makeRequest(method, path string, body interface{}, dest interface{}) error {
+	var err error
+	var requestBody []byte
+
+	route := host + apiPath + path
+	if body != nil {
+		requestBody, err = c.getRequestBody(method, body)
+		if err != nil {
+			return err
+		}
+	}
+
+	if method == http.MethodGet && requestBody != nil {
+		route += string(requestBody)
+	}
+
 	// Create http request
-	req, err := http.NewRequest(method, route, bytes.NewReader(requestBody))
+	req, err := http.NewRequest(method, route, nil)
 	if err != nil {
 		return fmt.Errorf("error creating http request: %s", err.Error())
+	}
+	if method == http.MethodPost && requestBody != nil {
+		req.Body = ioutil.NopCloser(bytes.NewReader(requestBody))
 	}
 	req.Header.Add("X-CSRF-TOKEN", c.config.CsrfToken)
 
@@ -157,21 +159,6 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	err = json.Unmarshal(responseBody, dest)
 	if err != nil {
 		return fmt.Errorf("error unmarshaling response: %s", err.Error())
-	}
-
-	if path == loginPath {
-		if csrfToken := r.Header.Get(www.CsrfToken); csrfToken != "" {
-			err = c.config.saveCSRFToken(csrfToken)
-			if err != nil {
-				return err
-			}
-		}
-
-		user := dest.(*User)
-		err = c.config.saveSession(c.httpClient.Jar.Cookies(req.URL), user)
-		if err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -311,30 +298,4 @@ func (c *client) batchVoteSummary(censorshipTokens *Tokens) ([]VoteStatus, error
 	}
 
 	return result.VotesStatus, err
-}
-
-func (c *client) login(email, password string) (*User, error) {
-	// fetch csrf token if it doesnt exist
-	if c.config.CsrfToken == "" {
-		_, err := c.version()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	h := sha3.New256()
-	h.Write([]byte(password))
-
-	login := Login{
-		Email:    email,
-		Password: hex.EncodeToString(h.Sum(nil)),
-	}
-
-	var user User
-	err := c.makeRequest(http.MethodPost, loginPath, login, &user)
-	if err != nil {
-		return nil, err
-	}
-
-	return &user, nil
 }
