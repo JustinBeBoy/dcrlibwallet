@@ -370,7 +370,7 @@ type VoteSummary struct {
 	EndHeight        int64              `json:"endheight,omitempty"`
 	QuorumPercentage int                `json:"quorumpercentage,omitempty"`
 	PassPercentage   int                `json:"passpercentage,omitempty"`
-	OptionsResult    []VoteOptionResult `json:"optionsresult,omitempty"`
+	OptionsResult    []VoteOptionResult `json:"results,omitempty"`
 }
 
 type VoteSummaries struct {

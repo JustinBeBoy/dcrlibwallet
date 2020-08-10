@@ -245,6 +245,56 @@ func (p *Politeia) GetBatchAbandonedProposals() (string, error) {
 	return p.result("GetBatchAbandonedProposals", proposals)
 }
 
+// CountPre gets the total count of proposals in discussion
+func (p *Politeia) CountPre() (string, error) {
+	tokenInventory, err := p.client.tokenInventory()
+	if err != nil {
+		return "", err
+	}
+
+	return p.result("CountPre", len(tokenInventory.Pre))
+}
+
+// CountActive gets the total count of active proposals
+func (p *Politeia) CountActive() (string, error) {
+	tokenInventory, err := p.client.tokenInventory()
+	if err != nil {
+		return "", err
+	}
+
+	return p.result("CountActive", len(tokenInventory.Active))
+}
+
+// CountApproved gets the total count of approved proposals
+func (p *Politeia) CountApproved() (string, error) {
+	tokenInventory, err := p.client.tokenInventory()
+	if err != nil {
+		return "", err
+	}
+
+	return p.result("CountApproved", len(tokenInventory.Approved))
+}
+
+// CountRejected gets the total count of rejected proposals
+func (p *Politeia) CountRejected() (string, error) {
+	tokenInventory, err := p.client.tokenInventory()
+	if err != nil {
+		return "", err
+	}
+
+	return p.result("CountRejected", len(tokenInventory.Rejected))
+}
+
+// CountAbandoned gets the total count of abandoned proposals
+func (p *Politeia) CountAbandoned() (string, error) {
+	tokenInventory, err := p.client.tokenInventory()
+	if err != nil {
+		return "", err
+	}
+
+	return p.result("CountAbandoned", len(tokenInventory.Abandoned))
+}
+
 // GetProposalDetails fetches the details of a single proposal
 // if the version argument is an empty string, the latest version is used
 func (p *Politeia) GetProposalDetails(censorshipToken, version string) (string, error) {
