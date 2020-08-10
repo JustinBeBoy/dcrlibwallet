@@ -20,6 +20,8 @@ import (
 type client struct {
 	httpClient *http.Client
 	config     *PoliteiaConfig
+
+	token string
 }
 
 const (
@@ -100,6 +102,13 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	var err error
 	var requestBody []byte
 
+	if c.config.CsrfToken == "" {
+		_, err := c.version()
+		if err != nil {
+			return err
+		}
+	}
+
 	route := host + apiPath + path
 	if body != nil {
 		requestBody, err = c.getRequestBody(method, body)
@@ -131,7 +140,10 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 		r.Body.Close()
 	}()
 
-	responseBody := util.ConvertBodyToByteArray(r.Body, false)
+	responseBody, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
 
 	if r.StatusCode != http.StatusOK {
 		switch r.StatusCode {
@@ -165,7 +177,8 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 }
 
 func (c *client) version() (*ServerVersion, error) {
-	req, err := http.NewRequest(http.MethodGet, versionPath, nil)
+	route := host + apiPath + versionPath
+	req, err := http.NewRequest(http.MethodGet, route, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating version request: %s", err.Error())
 	}
@@ -281,7 +294,7 @@ func (c *client) tokenInventory() (*TokenInventory, error) {
 	return &tokenInventory, nil
 }
 
-func (c *client) batchVoteSummary(censorshipTokens *Tokens) ([]VoteStatus, error) {
+func (c *client) batchVoteSummary(censorshipTokens *Tokens) (*VoteSummaries, error) {
 	if censorshipTokens == nil {
 		return nil, errors.New("censorship token cannot be empty")
 	}
@@ -291,11 +304,11 @@ func (c *client) batchVoteSummary(censorshipTokens *Tokens) ([]VoteStatus, error
 		return nil, err
 	}
 
-	var result VotesStatus
+	var result VoteSummaries
 	err = c.makeRequest(http.MethodPost, batchVoteSummaryPath, b, &result)
 	if err != nil {
 		return nil, err
 	}
 
-	return result.VotesStatus, err
+	return &result, err
 }

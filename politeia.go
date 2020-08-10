@@ -99,15 +99,14 @@ func (p *Politeia) GetBatchPreProposals() (string, error) {
 		return "", err
 	}
 
-	votesStatus, err := p.client.batchVoteSummary(prevotesproposals)
+	votesSummaries, err := p.client.batchVoteSummary(prevotesproposals)
 	if err != nil {
 		return "", err
 	}
 
 	for i := range proposals {
-		for j := range votesStatus {
-			voteStatus := votesStatus[j]
-			proposals[i].VoteStatus = voteStatus
+		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
+			proposals[i].VoteSummary = voteSummary
 		}
 	}
 
@@ -133,15 +132,14 @@ func (p *Politeia) GetBatchActiveProposals() (string, error) {
 		return "", err
 	}
 
-	votesStatus, err := p.client.batchVoteSummary(activeproposals)
+	votesSummaries, err := p.client.batchVoteSummary(activeproposals)
 	if err != nil {
 		return "", err
 	}
 
 	for i := range proposals {
-		for j := range votesStatus {
-			voteStatus := votesStatus[j]
-			proposals[i].VoteStatus = voteStatus
+		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
+			proposals[i].VoteSummary = voteSummary
 		}
 	}
 
@@ -167,15 +165,14 @@ func (p *Politeia) GetBatchApprovedProposals() (string, error) {
 		return "", err
 	}
 
-	votesStatus, err := p.client.batchVoteSummary(approvedproposals)
+	votesSummaries, err := p.client.batchVoteSummary(approvedproposals)
 	if err != nil {
 		return "", err
 	}
 
 	for i := range proposals {
-		for j := range votesStatus {
-			voteStatus := votesStatus[j]
-			proposals[i].VoteStatus = voteStatus
+		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
+			proposals[i].VoteSummary = voteSummary
 		}
 	}
 
@@ -201,15 +198,14 @@ func (p *Politeia) GetBatchRejectedProposals() (string, error) {
 		return "", err
 	}
 
-	votesStatus, err := p.client.batchVoteSummary(rejectedproposals)
+	votesSummaries, err := p.client.batchVoteSummary(rejectedproposals)
 	if err != nil {
 		return "", err
 	}
 
 	for i := range proposals {
-		for j := range votesStatus {
-			voteStatus := votesStatus[j]
-			proposals[i].VoteStatus = voteStatus
+		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
+			proposals[i].VoteSummary = voteSummary
 		}
 	}
 
@@ -235,15 +231,14 @@ func (p *Politeia) GetBatchAbandonedProposals() (string, error) {
 		return "", err
 	}
 
-	votesStatus, err := p.client.batchVoteSummary(abandonedproposals)
+	votesSummaries, err := p.client.batchVoteSummary(abandonedproposals)
 	if err != nil {
 		return "", err
 	}
 
 	for i := range proposals {
-		for j := range votesStatus {
-			voteStatus := votesStatus[j]
-			proposals[i].VoteStatus = voteStatus
+		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
+			proposals[i].VoteSummary = voteSummary
 		}
 	}
 
