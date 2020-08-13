@@ -289,12 +289,14 @@ type ProposalMetaData struct {
 }
 
 type ProposalCensorshipRecord struct {
-	Token     string `json:"token"`
+	Token     string `json:"token" storm:"index"`
 	Merkle    string `json:"merkle"`
 	Signature string `json:"signature"`
 }
 
 type Proposal struct {
+	ID               int                      `storm:"id,increment"`
+	Category         ProposalCategory         `json:"category" storm:"index"`
 	Name             string                   `json:"name"`
 	State            int                      `json:"state"`
 	Status           int                      `json:"status"`
@@ -317,7 +319,7 @@ type Proposals struct {
 	Proposals []Proposal `json:"proposals"`
 }
 
-type ProposalResult struct {
+type ProposalResults struct {
 	Proposal Proposal `json:"proposal"`
 }
 
@@ -384,14 +386,12 @@ type VoteT struct {
 	VoteType         int
 }
 
-type User struct {
-	Email         string `json:"email"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	SessionMaxAge int64  `json:"sessionmaxage"`
+type ResponseError struct {
+	Code    uint16 `json:"code"`
+	Message string `json:"message"`
 }
 
-type Login struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+type Response struct {
+	Result interface{}    `json:"result"`
+	Error  *ResponseError `json:"error"`
 }

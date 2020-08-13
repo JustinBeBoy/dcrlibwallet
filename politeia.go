@@ -11,257 +11,120 @@ import (
 
 type Politeia struct {
 	client *client
+	db     *storm.DB
+
+	syncQuitChan chan struct{}
 }
 
+const (
+	proposalsDbName = "proposals.db"
+)
+
 func NewPoliteia(rootDir string) (*Politeia, error) {
-	var err error
-	configDB, err = storm.Open(filepath.Join(rootDir, politeiaConfigDbName))
+	db, err := storm.Open(filepath.Join(rootDir, proposalsDbName))
 	if err != nil {
-		return nil, fmt.Errorf("error opening politeia database: %s", err.Error())
+		return nil, fmt.Errorf("error opening proposals database: %s", err.Error())
 	}
 
-	err = configDB.Init(&PoliteiaConfig{})
+	err = db.Init(&Proposal{})
 	if err != nil {
-		return nil, fmt.Errorf("error initializing politeia config database: %s", err.Error())
+		return nil, fmt.Errorf("error initializing proposals database: %s", err.Error())
 	}
 
-	config := &PoliteiaConfig{}
-
-	var shouldFetchVersion bool
-	err = configDB.Select(q.Eq("ID", 1)).First(config)
-	if err != nil {
-		if err == storm.ErrNotFound {
-			shouldFetchVersion = true
-		} else {
-			return nil, fmt.Errorf("error loading politeia config: %s", err.Error())
-		}
-	}
-
-	client, err := newPoliteiaClient(config)
+	client, err := newPoliteiaClient()
 	if err != nil {
 		return nil, err
 	}
 
-	if shouldFetchVersion {
-		config.ID = 1
-		configDB.Save(config)
-
-		_, err = client.version()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return &Politeia{
 		client: client,
+		db:     db,
 	}, nil
 }
 
 func (p *Politeia) Shutdown() {
-	configDB.Close()
+	p.db.Close()
 }
 
-func (p *Politeia) result(id string, res interface{}) (string, error) {
-	resByte, err := json.Marshal(res)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling %s result: %s", id, err.Error())
+func (p *Politeia) GetProposalsRaw(category ProposalCategory, offset, limit int32, newestFirst bool) ([]Proposal, error) {
+	query := p.prepareQuery(category, offset, limit, newestFirst)
+
+	var proposals []Proposal
+	err := query.Find(&proposals)
+	if err != nil && err != storm.ErrNotFound {
+		return nil, fmt.Errorf("error fetching proposals: %s", err.Error())
 	}
 
-	return string(resByte), nil
+	return proposals, nil
 }
 
-// GetTokenInventory fetches the censorship record tokens of all proposals in the inventory
-func (p *Politeia) GetTokenInventory() (string, error) {
-	tokenInventory, err := p.client.tokenInventory()
-	if err != nil {
-		return "", err
-	}
-
-	return p.result("GetTokenInventory", tokenInventory)
+func (p *Politeia) GetProposals(category ProposalCategory, offset, limit int32, newestFirst bool) (string, error) {
+	return processResult(p.GetProposalsRaw(category, offset, limit, newestFirst))
 }
 
-//GetBatchPreProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
-func (p *Politeia) GetBatchPreProposals() (string, error) {
-	tokenInventory, err := p.client.tokenInventory()
+func (p *Politeia) GetProposalByIDRaw(proposalID int) (*Proposal, error) {
+	var proposal Proposal
+	err := p.db.Select(q.Eq("ID", proposalID)).First(&proposal)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	var prevotesproposals *Tokens
-	if len(tokenInventory.Pre) > 20 {
-		prevotesproposals = &Tokens{tokenInventory.Pre[:20]}
+	return &proposal, nil
+}
+
+func (p *Politeia) GetProposalByID(proposalID int) (string, error) {
+	return processResult(p.GetProposalByIDRaw(proposalID))
+}
+
+func (p *Politeia) prepareQuery(category ProposalCategory, offset, limit int32, newestFirst bool) (query storm.Query) {
+	switch category {
+	case AllProposals:
+		query = p.db.Select(
+			q.True(),
+		)
+	default:
+		query = p.db.Select(
+			q.Eq("Category", category),
+		)
+	}
+
+	if offset > 0 {
+		query = query.Skip(int(offset))
+	}
+
+	if limit > 0 {
+		query = query.Limit(int(limit))
+	}
+
+	if newestFirst {
+		query = query.OrderBy("Timestamp").Reverse()
 	} else {
-		prevotesproposals = &Tokens{tokenInventory.Pre}
+		query = query.OrderBy("Timestamp")
 	}
 
-	proposals, err := p.client.batchProposals(prevotesproposals)
-	if err != nil {
-		return "", err
-	}
-
-	votesSummaries, err := p.client.batchVoteSummary(prevotesproposals)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range proposals {
-		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
-			proposals[i].VoteSummary = voteSummary
-		}
-	}
-
-	return p.result("GetBatchPreProposals", proposals)
+	return
 }
 
-//GetBatchActiveProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
-func (p *Politeia) GetBatchActiveProposals() (string, error) {
-	tokenInventory, err := p.client.tokenInventory()
-	if err != nil {
-		return "", err
-	}
+func processResult(result interface{}, err error) (string, error) {
+	var response Response
 
-	var activeproposals *Tokens
-	if len(tokenInventory.Active) > 20 {
-		activeproposals = &Tokens{tokenInventory.Active[:20]}
+	if err != nil {
+		response.Error = &ResponseError{}
+		if err == storm.ErrNotFound {
+			response.Error.Code = ErrNotFound
+			response.Error.Message = ErrorStatus[ErrNotFound]
+		} else {
+			response.Error.Code = ErrUnknownError
+			response.Error.Message = ErrorStatus[ErrUnknownError]
+		}
 	} else {
-		activeproposals = &Tokens{tokenInventory.Active}
+		response.Result = result
 	}
 
-	proposals, err := p.client.batchProposals(activeproposals)
+	responseB, err := json.Marshal(response)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error marshalling result: %s", err.Error())
 	}
 
-	votesSummaries, err := p.client.batchVoteSummary(activeproposals)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range proposals {
-		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
-			proposals[i].VoteSummary = voteSummary
-		}
-	}
-
-	return p.result("GetBatchActiveProposals", proposals)
-}
-
-//GetBatchApprovedProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
-func (p *Politeia) GetBatchApprovedProposals() (string, error) {
-	tokenInventory, err := p.client.tokenInventory()
-	if err != nil {
-		return "", err
-	}
-
-	var approvedproposals *Tokens
-	if len(tokenInventory.Approved) > 20 {
-		approvedproposals = &Tokens{tokenInventory.Approved[:20]}
-	} else {
-		approvedproposals = &Tokens{tokenInventory.Approved}
-	}
-
-	proposals, err := p.client.batchProposals(approvedproposals)
-	if err != nil {
-		return "", err
-	}
-
-	votesSummaries, err := p.client.batchVoteSummary(approvedproposals)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range proposals {
-		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
-			proposals[i].VoteSummary = voteSummary
-		}
-	}
-
-	return p.result("GetBatchApprovedProposals", proposals)
-}
-
-//GetBatchRejectedProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
-func (p *Politeia) GetBatchRejectedProposals() (string, error) {
-	tokenInventory, err := p.client.tokenInventory()
-	if err != nil {
-		return "", err
-	}
-
-	var rejectedproposals *Tokens
-	if len(tokenInventory.Rejected) > 20 {
-		rejectedproposals = &Tokens{tokenInventory.Rejected[:20]}
-	} else {
-		rejectedproposals = &Tokens{tokenInventory.Rejected}
-	}
-
-	proposals, err := p.client.batchProposals(rejectedproposals)
-	if err != nil {
-		return "", err
-	}
-
-	votesSummaries, err := p.client.batchVoteSummary(rejectedproposals)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range proposals {
-		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
-			proposals[i].VoteSummary = voteSummary
-		}
-	}
-
-	return p.result("GetBatchRejectedProposals", proposals)
-}
-
-//GetBatchAbandonedProposals retrieves the proposal details for a list of pre-vote proposals using an array of csfr as params
-func (p *Politeia) GetBatchAbandonedProposals() (string, error) {
-	tokenInventory, err := p.client.tokenInventory()
-	if err != nil {
-		return "", err
-	}
-
-	var abandonedproposals *Tokens
-	if len(tokenInventory.Abandoned) > 20 {
-		abandonedproposals = &Tokens{tokenInventory.Abandoned[:20]}
-	} else {
-		abandonedproposals = &Tokens{tokenInventory.Abandoned}
-	}
-
-	proposals, err := p.client.batchProposals(abandonedproposals)
-	if err != nil {
-		return "", err
-	}
-
-	votesSummaries, err := p.client.batchVoteSummary(abandonedproposals)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range proposals {
-		if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
-			proposals[i].VoteSummary = voteSummary
-		}
-	}
-
-	return p.result("GetBatchAbandonedProposals", proposals)
-}
-
-// GetProposalDetails fetches the details of a single proposal
-// if the version argument is an empty string, the latest version is used
-func (p *Politeia) GetProposalDetails(censorshipToken, version string) (string, error) {
-	res, err := p.client.proposalDetails(censorshipToken, version)
-	if err != nil {
-		return "", err
-	}
-
-	return p.result("GetProposalDetails", res)
-}
-
-// GetVoteStatus fetches the vote status of a single public proposal
-func (p *Politeia) GetVoteStatus(censorshipToken string) (string, error) {
-	res, err := p.client.voteStatus(censorshipToken)
-	if err != nil {
-		return "", err
-	}
-
-	return p.result("GetVoteStatus", res)
+	return string(responseB), nil
 }

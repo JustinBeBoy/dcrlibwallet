@@ -1,6 +1,19 @@
 package dcrlibwallet
 
 const (
+	ErrNotFound uint16 = iota + 1
+	ErrUnknownError
+)
+
+var (
+	ErrorStatus = map[uint16]string{
+		ErrNotFound:     "no record found",
+		ErrUnknownError: "an unknown error occurred",
+	}
+)
+
+/**
+const (
 	// Error status codes
 	ErrorStatusInvalid                     uint16 = 0
 	ErrorStatusInvalidPassword             uint16 = 1
@@ -146,3 +159,4 @@ var (
 		ErrorStatusInvalidProposalVersion:      "invalid proposal version",
 	}
 )
+**/

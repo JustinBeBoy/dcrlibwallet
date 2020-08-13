@@ -19,9 +19,10 @@ import (
 
 type client struct {
 	httpClient *http.Client
-	config     *PoliteiaConfig
 
-	token string
+	policy             *ServerPolicy
+	csrfToken          string
+	csrfTokenExpiresAt time.Time
 }
 
 const (
@@ -39,13 +40,11 @@ const (
 	batchVoteSummaryPath = "/proposals/batchvotesummary"
 )
 
-func newPoliteiaClient(cfg *PoliteiaConfig) (*client, error) {
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-	}
-
+func newPoliteiaClient() (*client, error) {
 	tr := &http.Transport{
-		TLSClientConfig: tlsConfig,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
 	}
 
 	// Set cookies
@@ -55,21 +54,23 @@ func newPoliteiaClient(cfg *PoliteiaConfig) (*client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error initializing cookiejar: %s", err.Error())
 	}
+	/**if err != nil {
+		return nil, fmt.Errorf("error initializing cookiejar: %s", err.Error())
+	}
 
 	u, err := url.Parse(host)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing politeia host url: %s", err.Error())
 	}
-	jar.SetCookies(u, cfg.getCookies())
+	jar.SetCookies(u, cfg.getCookies())**/
 
 	httpClient := &http.Client{
 		Transport: tr,
 		Jar:       jar,
-		Timeout:   time.Second * 10,
+		Timeout:   time.Second * 30,
 	}
 
 	c := &client{
-		config:     cfg,
 		httpClient: httpClient,
 	}
 
@@ -102,7 +103,7 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	var err error
 	var requestBody []byte
 
-	if c.config.CsrfToken == "" {
+	if c.csrfToken == "" || time.Now().Unix() >= c.csrfTokenExpiresAt.Unix() {
 		_, err := c.version()
 		if err != nil {
 			return err
@@ -129,7 +130,7 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	if method == http.MethodPost && requestBody != nil {
 		req.Body = ioutil.NopCloser(bytes.NewReader(requestBody))
 	}
-	req.Header.Add("X-CSRF-TOKEN", c.config.CsrfToken)
+	req.Header.Add(www.CsrfToken, c.csrfToken)
 
 	// Send request
 	r, err := c.httpClient.Do(req)
@@ -182,7 +183,7 @@ func (c *client) version() (*ServerVersion, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error creating version request: %s", err.Error())
 	}
-	req.Header.Add(www.CsrfToken, c.config.CsrfToken)
+	req.Header.Add(www.CsrfToken, c.csrfToken)
 
 	// Send request
 	r, err := c.httpClient.Do(req)
@@ -223,14 +224,9 @@ func (c *client) version() (*ServerVersion, error) {
 		return nil, fmt.Errorf("error unmarshaling version response: %s", err.Error())
 	}
 
-	err = c.config.saveCSRFToken(r.Header.Get(www.CsrfToken))
-	if err != nil {
-		return nil, err
-	}
-
-	err = c.config.saveCookies(c.httpClient.Jar.Cookies(req.URL))
-	if err != nil {
-		return nil, err
+	newCsrfToken := r.Header.Get(www.CsrfToken)
+	if newCsrfToken != "" {
+		c.csrfToken = newCsrfToken
 	}
 
 	return &versionResponse, nil
@@ -258,7 +254,8 @@ func (c *client) batchProposals(censorshipTokens *Tokens) ([]Proposal, error) {
 	return result.Proposals, err
 }
 
-func (c *client) proposalDetails(censorshipToken, version string) (Proposal, error) {
+/**
+func (c *client) proposalDetailsd(censorshipToken, version string) (Proposal, error) {
 	var queryParams []byte
 	if version != "" {
 		queryParams = []byte("version=" + version)
@@ -282,7 +279,7 @@ func (c *client) votesStatus() (VotesStatus, error) {
 	err := c.makeRequest(http.MethodGet, votesStatusPath, nil, &votesStatus)
 	return votesStatus, err
 }
-
+**/
 func (c *client) tokenInventory() (*TokenInventory, error) {
 	var tokenInventory TokenInventory
 
