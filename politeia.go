@@ -43,6 +43,7 @@ func (p *Politeia) Shutdown() {
 	p.db.Close()
 }
 
+// GetProposalsRaw fetches and returns a proposals from the db
 func (p *Politeia) GetProposalsRaw(category ProposalCategory, offset, limit int32, newestFirst bool) ([]Proposal, error) {
 	query := p.prepareQuery(category, offset, limit, newestFirst)
 
@@ -55,10 +56,28 @@ func (p *Politeia) GetProposalsRaw(category ProposalCategory, offset, limit int3
 	return proposals, nil
 }
 
+// GetProposals returns the result of GetProposalsRaw as a JSON string
 func (p *Politeia) GetProposals(category ProposalCategory, offset, limit int32, newestFirst bool) (string, error) {
 	return processResult(p.GetProposalsRaw(category, offset, limit, newestFirst))
 }
 
+// GetProposalRaw fetches and returns a single proposal specified by it's censorship record token
+func (p *Politeia) GetProposalRaw(censorshipToken string) (*Proposal, error) {
+	var proposal Proposal
+	err := p.db.Select(q.Eq("Token", censorshipToken)).First(&proposal)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proposal, nil
+}
+
+// GetProposal returns the result of GetProposalRaw as a JSON string
+func (p *Politeia) GetProposal(censorshipToken string) (string, error) {
+	return processResult(p.GetProposalRaw(censorshipToken))
+}
+
+// GetProposalByIDRaw fetches and returns a single proposal specified by it's ID
 func (p *Politeia) GetProposalByIDRaw(proposalID int) (*Proposal, error) {
 	var proposal Proposal
 	err := p.db.Select(q.Eq("ID", proposalID)).First(&proposal)
@@ -69,8 +88,85 @@ func (p *Politeia) GetProposalByIDRaw(proposalID int) (*Proposal, error) {
 	return &proposal, nil
 }
 
+// GetProposalByID returns the result of GetProposalByIDRaw as a JSON string
 func (p *Politeia) GetProposalByID(proposalID int) (string, error) {
 	return processResult(p.GetProposalByIDRaw(proposalID))
+}
+
+// GetVoteStatusRaw fetches and returns the vote status of a proposal
+func (p *Politeia) GetVoteStatusRaw(censorshipToken string) (*VoteStatus, error) {
+	proposal, err := p.GetProposalRaw(censorshipToken)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proposal.VoteStatus, nil
+}
+
+// GetVoteStatus returns the result of GetVoteStatusRaw as a JSON string
+func (p *Politeia) GetVoteStatus(censorshipToken string) (string, error) {
+	return processResult(p.GetVoteStatusRaw(censorshipToken))
+}
+
+func (p *Politeia) count(category ProposalCategory) (int, error) {
+	var proposals []Proposal
+
+	err := p.db.Select(q.Eq("Category", category)).Find(&proposals)
+	if err != nil {
+		return 0, fmt.Errorf("error fetching number of pre proposals: %s", err.Error())
+	}
+
+	return len(proposals), nil
+}
+
+// CountPreRaw gets the total count of proposals in discussion
+func (p *Politeia) CountPreRaw() (int, error) {
+	return p.count(PreProposals)
+}
+
+// CountPre returns the result of CountPreRaw as a JSON string
+func (p *Politeia) CountPre() (string, error) {
+	return processResult(p.CountPreRaw())
+}
+
+// CountActiveRaw gets the total count of active proposals
+func (p *Politeia) CountActiveRaw() (int, error) {
+	return p.count(ActiveProposals)
+}
+
+// CountActive returns the result of CountActiveRaw as a JSON string
+func (p *Politeia) CountActive() (string, error) {
+	return processResult(p.CountActive())
+}
+
+// CountApprovedRaw gets the total count of approved proposals
+func (p *Politeia) CountApprovedRaw() (int, error) {
+	return p.count(ApprovedProposals)
+}
+
+// CountApproved returns the result of CountApprovedRaw as a JSON string
+func (p *Politeia) CountApproved() (string, error) {
+	return processResult(p.CountApprovedRaw())
+}
+
+// CountRejectedRaw gets the total count of rejected proposals
+func (p *Politeia) CountRejectedRaw() (int, error) {
+	return p.count(RejectedProposals)
+}
+
+// CountRejected returns the result of CountRejected as a JSON string
+func (p *Politeia) CountRejected() (string, error) {
+	return processResult(p.CountRejectedRaw())
+}
+
+// CountAbandonedRaw gets the total count of abandoned proposals
+func (p *Politeia) CountAbandonedRaw() (int, error) {
+	return p.count(AbandonedProposals)
+}
+
+// CountAbandoned returns the result of CountAbandonedRaw as a JSON string
+func (p *Politeia) CountAbandoned() (string, error) {
+	return processResult(p.CountAbandonedRaw())
 }
 
 func (p *Politeia) prepareQuery(category ProposalCategory, offset, limit int32, newestFirst bool) (query storm.Query) {

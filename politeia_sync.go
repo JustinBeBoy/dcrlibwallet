@@ -151,6 +151,7 @@ func (p *Politeia) syncBatchProposals(category ProposalCategory, proposalsInvent
 
 		for i := range proposals {
 			proposals[i].Category = category
+			proposals[i].Token = proposals[i].CensorshipRecord.Token
 			if voteSummary, ok := votesSummaries.Summaries[proposals[i].CensorshipRecord.Token]; ok {
 				proposals[i].VoteSummary = voteSummary
 			}
