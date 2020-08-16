@@ -395,3 +395,9 @@ type Response struct {
 	Result interface{}    `json:"result"`
 	Error  *ResponseError `json:"error"`
 }
+
+type PoliteiaNotificationListeners interface {
+	OnNewProposal(proposal *Proposal)
+	OnVoteStarted(proposal *Proposal)
+	OnVoteFinished(proposal *Proposal)
+}

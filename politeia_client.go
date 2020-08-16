@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"time"
 
 	www "github.com/decred/politeia/politeiawww/api/www/v1"
 	"github.com/decred/politeia/util"
-	"golang.org/x/net/publicsuffix"
 )
 
 type client struct {
@@ -22,6 +20,7 @@ type client struct {
 
 	policy             *ServerPolicy
 	csrfToken          string
+	cookies            []*http.Cookie
 	csrfTokenExpiresAt time.Time
 }
 
@@ -31,50 +30,37 @@ const (
 
 	versionPath          = "/version"
 	policyPath           = "/policy"
-	vettedProposalsPath  = "/proposals/vetted"
-	voteStatusPath       = "/proposals/%s/votestatus"
 	votesStatusPath      = "/proposals/votestatus"
-	proposalDetailsPath  = "/proposals/%s"
 	tokenInventoryPath   = "/proposals/tokeninventory"
 	batchProposalsPath   = "/proposals/batch"
 	batchVoteSummaryPath = "/proposals/batchvotesummary"
+
+	ErrNotFound uint16 = iota + 1
+	ErrUnknownError
 )
 
-func newPoliteiaClient() (*client, error) {
+var (
+	ErrorStatus = map[uint16]string{
+		ErrNotFound:     "no record found",
+		ErrUnknownError: "an unknown error occurred",
+	}
+)
+
+func newPoliteiaClient() *client {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
 	}
 
-	// Set cookies
-	jar, err := cookiejar.New(&cookiejar.Options{
-		PublicSuffixList: publicsuffix.List,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error initializing cookiejar: %s", err.Error())
-	}
-	/**if err != nil {
-		return nil, fmt.Errorf("error initializing cookiejar: %s", err.Error())
-	}
-
-	u, err := url.Parse(host)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing politeia host url: %s", err.Error())
-	}
-	jar.SetCookies(u, cfg.getCookies())**/
-
 	httpClient := &http.Client{
 		Transport: tr,
-		Jar:       jar,
 		Timeout:   time.Second * 30,
 	}
 
-	c := &client{
+	return &client{
 		httpClient: httpClient,
 	}
-
-	return c, nil
 }
 
 func (c *client) getRequestBody(method string, body interface{}) ([]byte, error) {
@@ -103,7 +89,7 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	var err error
 	var requestBody []byte
 
-	if c.csrfToken == "" || time.Now().Unix() >= c.csrfTokenExpiresAt.Unix() {
+	if c.csrfToken == "" {
 		_, err := c.version()
 		if err != nil {
 			return err
@@ -132,6 +118,10 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	}
 	req.Header.Add(www.CsrfToken, c.csrfToken)
 
+	for _, cookie := range c.cookies {
+		req.AddCookie(cookie)
+	}
+
 	// Send request
 	r, err := c.httpClient.Do(req)
 	if err != nil {
@@ -147,26 +137,7 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	}
 
 	if r.StatusCode != http.StatusOK {
-		switch r.StatusCode {
-		case http.StatusNotFound:
-			return errors.New("resource not found")
-		case http.StatusInternalServerError:
-			return errors.New("internal server error")
-		case http.StatusForbidden:
-			return errors.New(string(responseBody))
-		case http.StatusUnauthorized:
-			var errResp Err
-			if err := json.Unmarshal(responseBody, &errResp); err != nil {
-				return err
-			}
-			return fmt.Errorf("unauthorized: %s", ErrorStatus[errResp.Code])
-		case http.StatusBadRequest:
-			var errResp Err
-			if err := json.Unmarshal(responseBody, &errResp); err != nil {
-				return err
-			}
-			return fmt.Errorf("bad request: %s", ErrorStatus[errResp.Code])
-		}
+		return c.handleError(r.StatusCode, responseBody)
 	}
 
 	err = json.Unmarshal(responseBody, dest)
@@ -175,6 +146,31 @@ func (c *client) makeRequest(method, path string, body interface{}, dest interfa
 	}
 
 	return nil
+}
+
+func (c *client) handleError(statusCode int, responseBody []byte) error {
+	switch statusCode {
+	case http.StatusNotFound:
+		return errors.New("resource not found")
+	case http.StatusInternalServerError:
+		return errors.New("internal server error")
+	case http.StatusForbidden:
+		return errors.New(string(responseBody))
+	case http.StatusUnauthorized:
+		var errResp Err
+		if err := json.Unmarshal(responseBody, &errResp); err != nil {
+			return err
+		}
+		return fmt.Errorf("unauthorized: %s", ErrorStatus[errResp.Code])
+	case http.StatusBadRequest:
+		var errResp Err
+		if err := json.Unmarshal(responseBody, &errResp); err != nil {
+			return err
+		}
+		return fmt.Errorf("bad request: %s", ErrorStatus[errResp.Code])
+	}
+
+	return errors.New("unknown error")
 }
 
 func (c *client) version() (*ServerVersion, error) {
@@ -194,28 +190,11 @@ func (c *client) version() (*ServerVersion, error) {
 		r.Body.Close()
 	}()
 
+	c.cookies = r.Cookies()
+
 	responseBody := util.ConvertBodyToByteArray(r.Body, false)
 	if r.StatusCode != http.StatusOK {
-		switch r.StatusCode {
-		case http.StatusNotFound:
-			return nil, errors.New("resource not found")
-		case http.StatusInternalServerError:
-			return nil, errors.New("internal server error")
-		case http.StatusForbidden:
-			return nil, errors.New(string(responseBody))
-		case http.StatusUnauthorized:
-			var errResp Err
-			if err := json.Unmarshal(responseBody, &errResp); err != nil {
-				return nil, err
-			}
-			return nil, fmt.Errorf("unauthorized: %s", ErrorStatus[errResp.Code])
-		case http.StatusBadRequest:
-			var errResp Err
-			if err := json.Unmarshal(responseBody, &errResp); err != nil {
-				return nil, err
-			}
-			return nil, fmt.Errorf("bad request: %s", ErrorStatus[errResp.Code])
-		}
+		return nil, c.handleError(r.StatusCode, responseBody)
 	}
 
 	var versionResponse ServerVersion
@@ -254,32 +233,16 @@ func (c *client) batchProposals(censorshipTokens *Tokens) ([]Proposal, error) {
 	return result.Proposals, err
 }
 
-/**
-func (c *client) proposalDetailsd(censorshipToken, version string) (Proposal, error) {
-	var queryParams []byte
-	if version != "" {
-		queryParams = []byte("version=" + version)
+func (c *client) votesStatus() ([]VoteStatus, error) {
+	var votesStatus VotesStatus
+	err := c.makeRequest(http.MethodGet, votesStatusPath, nil, &votesStatus)
+	if err != nil {
+		return nil, err
 	}
 
-	var proposalResult ProposalResult
-	err := c.makeRequest(http.MethodGet, fmt.Sprintf(proposalDetailsPath, censorshipToken), queryParams, &proposalResult)
-	return proposalResult.Proposal, err
+	return votesStatus.VotesStatus, nil
 }
 
-func (c *client) voteStatus(censorshipToken string) (VoteStatus, error) {
-	var voteStatus VoteStatus
-
-	err := c.makeRequest(http.MethodGet, fmt.Sprintf(voteStatusPath, censorshipToken), nil, &voteStatus)
-	return voteStatus, err
-}
-
-func (c *client) votesStatus() (VotesStatus, error) {
-	var votesStatus VotesStatus
-
-	err := c.makeRequest(http.MethodGet, votesStatusPath, nil, &votesStatus)
-	return votesStatus, err
-}
-**/
 func (c *client) tokenInventory() (*TokenInventory, error) {
 	var tokenInventory TokenInventory
 

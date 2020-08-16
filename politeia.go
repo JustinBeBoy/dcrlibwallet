@@ -13,7 +13,8 @@ type Politeia struct {
 	client *client
 	db     *storm.DB
 
-	syncQuitChan chan struct{}
+	syncQuitChan          chan struct{}
+	notificationListeners PoliteiaNotificationListeners
 }
 
 const (
@@ -31,18 +32,14 @@ func NewPoliteia(rootDir string) (*Politeia, error) {
 		return nil, fmt.Errorf("error initializing proposals database: %s", err.Error())
 	}
 
-	client, err := newPoliteiaClient()
-	if err != nil {
-		return nil, err
-	}
-
 	return &Politeia{
-		client: client,
+		client: newPoliteiaClient(),
 		db:     db,
 	}, nil
 }
 
 func (p *Politeia) Shutdown() {
+	close(p.syncQuitChan)
 	p.db.Close()
 }
 
