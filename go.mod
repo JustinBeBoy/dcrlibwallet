@@ -1,8 +1,6 @@
 module github.com/planetdecred/dcrlibwallet
 
 require (
-	github.com/AndreasBriese/bbloom v0.0.0-20190306092124-e2d15f34fcf9 // indirect
-	github.com/DataDog/zstd v1.3.5 // indirect
 	github.com/asdine/storm v0.0.0-20190216191021-fe89819f6282
 	github.com/decred/dcrd/addrmgr v1.1.0
 	github.com/decred/dcrd/blockchain/stake v1.2.1 // indirect
@@ -25,27 +23,26 @@ require (
 	github.com/decred/dcrwallet/ticketbuyer/v4 v4.0.0
 	github.com/decred/dcrwallet/wallet/v3 v3.2.1-badger
 	github.com/decred/dcrwallet/walletseed v1.0.1
+	github.com/decred/politeia v0.1.0
 	github.com/decred/slog v1.0.0
-	github.com/dgraph-io/badger v1.5.4
-	github.com/dgryski/go-farm v0.0.0-20190104051053-3adb47b1fb0f // indirect
-	github.com/gorilla/websocket v1.4.1 // indirect
+	github.com/dgraph-io/badger v1.5.5-0.20190214192501-3196cc1d7a5f
+	github.com/gorilla/websocket v1.4.1
 	github.com/jrick/logrotate v1.0.0
 	github.com/kevinburke/nacl v0.0.0-20190829012316-f3ed23dbd7f8
 	github.com/onsi/ginkgo v1.8.0
 	github.com/onsi/gomega v1.5.0
-	github.com/pkg/errors v0.8.1 // indirect
 	github.com/planetdecred/dcrlibwallet/spv v0.0.0-00010101000000-000000000000
-	github.com/stretchr/testify v1.3.0 // indirect
 	go.etcd.io/bbolt v1.3.3
 	golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550
+	golang.org/x/mobile v0.0.0-20200801112145-973feb4309de // indirect
+	golang.org/x/net v0.0.0-20191028085509-fe3aa8a45271
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898 // indirect
-	google.golang.org/appengine v1.5.0 // indirect
 )
 
 replace (
 	decred.org/dcrwallet => decred.org/dcrwallet v1.2.3-0.20191024200307-d273b5687adf
 	github.com/decred/dcrwallet/wallet/v3 => github.com/raedahgroup/dcrwallet/wallet/v3 v3.2.1-badger
+	github.com/dgraph-io/badger => github.com/dgraph-io/badger v1.5.4
 	github.com/planetdecred/dcrlibwallet/spv => ./spv
 )
 
